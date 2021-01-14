@@ -1,5 +1,6 @@
 # ------------------------------------------------
 # Generic Makefile for Synopsys Designware ARC processor
+# QEMU source code available at https://github.com/foss-for-synopsys-dwc-arc-processors/qemu
 # ------------------------------------------------
 
 ######################################
@@ -36,17 +37,25 @@ CUR_CORE ?= arcem
 TOOLCHAIN ?= mw
 OLEVEL ?= O0
 OUT_DIR_ROOT ?= $(BUILD_DIR)
+APPL_INC_DIR = $(TOP_DIR)/board/ARC_QEMU_EM/BSP/Inc
 
 export BOARD
 export BD_VER
 export CUR_CORE
 export TOOLCHAIN
 export OUT_DIR_ROOT
+export APPL_INC_DIR
 export OLEVEL
 
 EMBARC_BSP_ROOT = $(TOP_DIR)/platform/vendor_bsp/Synopsys/ARC/embarc_bsp
-
 EMBARC_BSP_TEST_FILE = $(EMBARC_BSP_ROOT)/arc/startup/arc_startup.s
+
+QEMU_EXECUTABLE ?= qemu-system-arc
+QEMU_PIPE=$(BUILD_DIR)/qemu_fifo.log
+QEMU_OPT = -cpu $(CUR_CORE) -M virt -m 8M -nographic -no-reboot -monitor none \
+	-global cpu.firq=false -global cpu.num-irqlevels=15 -global cpu.num-irq=25 \
+	-global cpu.ext-irq=20 -global cpu.freq_hz=1000000 -global cpu.timer0=true \
+	-global cpu.timer1=true -net none -pidfile $(BUILD_DIR)/qemu.pid -chardev pipe,id=con,mux=on,path=$(QEMU_PIPE) 
 
 ifeq ($(wildcard $(EMBARC_BSP_TEST_FILE)),)
 $(info )
@@ -99,7 +108,7 @@ CMSIS_SRC =  \
 C_SOURCES += $(CMSIS_SRC)
 
 APPLICATION_SRC =  \
-		${wildcard $(TOP_DIR)/board/ARC_NSIM_EM/BSP/Src/*.c} \
+		${wildcard $(TOP_DIR)/board/ARC_QEMU_EM/BSP/Src/*.c} \
 		${wildcard $(TOP_DIR)/examples/$(APPLICATION)/*.c}
 
 C_SOURCES += $(APPLICATION_SRC)
@@ -162,7 +171,10 @@ C_DEFS =  \
 	-D_HOSTLINK_ \
 	-D_NSIM_ \
 	-D_STACKSIZE=2048 \
-	-DARC_FEATURE_STACK_CHECK=0
+	-DARC_FEATURE_STACK_CHECK=0 \
+	-DARC_FEATURE_CODE_DENSITY=0 \
+	-DARC_FEATURE_FPU=0 \
+	-DARC_FEATURE_DSP=0
 
 # include dirs
 ARCH_INC = \
@@ -171,7 +183,7 @@ ARCH_INC = \
 C_INCLUDES += $(ARCH_INC)
 
 BOARD_INC = \
-		-I $(TOP_DIR)/board/ARC_NSIM_EM/BSP/Inc
+		-I $(TOP_DIR)/board/ARC_QEMU_EM/TOS_CONFIG
 C_INCLUDES += $(BOARD_INC)
 
 KERNEL_INC = \
@@ -207,7 +219,7 @@ ASFLAGS = @$(COMPILER_ARG_FILE) -fdata-sections -ffunction-sections -mno-sdata -
 
 CFLAGS =  @$(COMPILER_ARG_FILE) -fdata-sections -ffunction-sections -mno-sdata -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) -std=gnu99
 
-LDFLAGS = --specs=nsim.specs @$(COMPILER_ARG_FILE) -mno-sdata -nostartfiles -Wl,-M,-Map=$(BUILD_DIR)/gnu_arcem.map -lm -Wl,--script=$(LDF_FILE)
+LDFLAGS = --specs=qemu.specs @$(COMPILER_ARG_FILE) -mno-sdata -nostartfiles -Wl,-M,-Map=$(BUILD_DIR)/gnu_arcem.map -lm -Wl,--script=$(LDF_FILE)
 endif
 # default action: build all
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET).bin
@@ -228,9 +240,8 @@ vpath %.S $(sort $(dir $(ASM_SOURCES_S)))
 # EMBARC_PREBUILT_LIBRARY = -Hldopt=-Bgrouplib
 EMBARC_PREBUILT_LIBRARY = $(EMBARC_OUT_DIR)/libembarc.a
 
-
 build_embarc_lib: | $(BUILD_DIR)
-	make -f $(EMBARC_BSP_ROOT)/options/options.mk V=1 embarc_lib
+	make -f $(EMBARC_BSP_ROOT)/options/options.mk V=1 EXTRA_DEFINES="-DUSE_APPL_MEM_CONFIG" RUN_ON_QEMU=1 embarc_lib
 
 $(BUILD_DIR)/%.o: %.c Makefile | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
@@ -260,17 +271,12 @@ $(BUILD_DIR):
 clean:
 	-rm -fR $(BUILD_DIR)
 
-nsim_debug : $(BUILD_DIR)/$(TARGET).elf
-	mdb -nooptions -nogoifmain -toggle=include_local_symbols=1 -nsim -off=binary_stdin -off=binary_stdout  -on=load_at_paddr -on=reset_upon_restart -off=flush_pipe -off=cr_for_more -OKN -prop=nsim_mem-dev=uart0,kind=dwuart,base=0xf0000000,irq=24 @$(MDB_ARG_FILE) $<
 #######################################
 # dependencies
 #######################################
-run : $(BUILD_DIR)/$(TARGET).elf
-ifeq ($(TOOLCHAIN),mw)
-	mdb -nooptions -nogoifmain -toggle=include_local_symbols=1 -nsim -off=binary_stdin -off=binary_stdout  -on=load_at_paddr -on=reset_upon_restart -off=flush_pipe -off=cr_for_more -OKN -prop=nsim_mem-dev=uart0,kind=dwuart,base=0xf0000000,irq=24 @$(MDB_ARG_FILE) -run $<
-else
-	nsimdrv -p nsim_emt=1 -prop=nsim_mem-dev=uart0,kind=dwuart,base=0xf0000000,irq=24 -propsfile $(NSIM_PROPS) $<
-endif
+run: $(BUILD_DIR)/$(TARGET).elf
+	@touch $(QEMU_PIPE)
+	$(QEMU_EXECUTABLE) $(QEMU_OPT) -kernel $<
 
 -include $(wildcard $(BUILD_DIR)/*.d)
 
