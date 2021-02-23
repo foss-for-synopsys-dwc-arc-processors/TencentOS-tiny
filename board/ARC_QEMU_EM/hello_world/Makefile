@@ -51,11 +51,10 @@ EMBARC_BSP_ROOT = $(TOP_DIR)/platform/vendor_bsp/Synopsys/ARC/embarc_bsp
 EMBARC_BSP_TEST_FILE = $(EMBARC_BSP_ROOT)/arc/startup/arc_startup.s
 
 QEMU_EXECUTABLE ?= qemu-system-arc
-QEMU_PIPE=$(BUILD_DIR)/qemu_fifo.log
 QEMU_OPT = -cpu $(CUR_CORE) -M virt -m 8M -nographic -no-reboot -monitor none \
 	-global cpu.firq=false -global cpu.num-irqlevels=15 -global cpu.num-irq=25 \
 	-global cpu.ext-irq=20 -global cpu.freq_hz=1000000 -global cpu.timer0=true \
-	-global cpu.timer1=true -net none -pidfile $(BUILD_DIR)/qemu.pid -chardev pipe,id=con,mux=on,path=$(QEMU_PIPE) 
+	-global cpu.timer1=true -net none 
 
 ifeq ($(wildcard $(EMBARC_BSP_TEST_FILE)),)
 $(info )
@@ -87,7 +86,6 @@ MDB_ARG_FILE := $(EMBARC_OUT_DIR)/embARC_generated/mdb.arg
 else
 COMPILER_ARG_FILE := $(EMBARC_OUT_DIR)/embARC_generated/gcc.arg
 LDF_FILE := $(EMBARC_OUT_DIR)/linker_gnu.ldf
-NSIM_PROPS := $(EMBARC_OUT_DIR)/embARC_generated/nsim.props
 endif
 
 ######################################
@@ -168,7 +166,6 @@ C_DEFS =  \
 	-DLIB_CONSOLE \
 	-DLIB_CLIB \
 	-D_HEAPSIZE=8192 \
-	-D_HOSTLINK_ \
 	-D_NSIM_ \
 	-D_STACKSIZE=2048 \
 	-DARC_FEATURE_STACK_CHECK=0 \
@@ -207,17 +204,18 @@ EMBARC_BSP_INC =  \
 		-I $(EMBARC_OUT_DIR)/embARC_generated
 C_INCLUDES += $(EMBARC_BSP_INC)
 
+MKDEP_OPT	= -MMD -MT $@ -MF $@.d
 ifeq ($(TOOLCHAIN),mw)
-ASFLAGS = @$(COMPILER_ARG_FILE) -Hnoccm -Hnosdata -Wincompatible-pointer-types -Hnocopyr -Hasmcpp -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) -MMD -MT $@ -MF $@.d
+ASFLAGS = @$(COMPILER_ARG_FILE) -Hnoccm -Hnosdata -Wincompatible-pointer-types -Hnocopyr -Hasmcpp -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) $(MKDEP_OPT)
 
-CFLAGS =  @$(COMPILER_ARG_FILE) -Hnoccm -Hnosdata -Wincompatible-pointer-types -Hnocopyr -Hnocplus -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) -MMD -MT $@ -MF $@.d
+CFLAGS =  @$(COMPILER_ARG_FILE) -Hnoccm -Hnosdata -Wincompatible-pointer-types -Hnocopyr -Hnocplus -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) $(MKDEP_OPT)
 
 LDFLAGS = -Hhostlink @$(COMPILER_ARG_FILE) -Hnocopyr -Hnosdata -Hnocrt -Hldopt=-Coutput=$(BUILD_DIR)/mw_arcem.map -Hldopt=-Csections -Hldopt=-Ccrossfunc -Hldopt=-Csize -zstdout $(LDF_FILE)
 else
 
-ASFLAGS = @$(COMPILER_ARG_FILE) -fdata-sections -ffunction-sections -mno-sdata -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) -x assembler-with-cpp
+ASFLAGS = @$(COMPILER_ARG_FILE) -fdata-sections -ffunction-sections -mno-sdata -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) $(MKDEP_OPT) -x assembler-with-cpp
 
-CFLAGS =  @$(COMPILER_ARG_FILE) -fdata-sections -ffunction-sections -mno-sdata -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) -std=gnu99
+CFLAGS =  @$(COMPILER_ARG_FILE) -fdata-sections -ffunction-sections -mno-sdata -$(OLEVEL) -g $(C_DEFS) $(C_INCLUDES) $(MKDEP_OPT) -std=gnu99
 
 LDFLAGS = --specs=qemu.specs @$(COMPILER_ARG_FILE) -mno-sdata -nostartfiles -Wl,-M,-Map=$(BUILD_DIR)/gnu_arcem.map -lm -Wl,--script=$(LDF_FILE)
 endif
@@ -275,7 +273,6 @@ clean:
 # dependencies
 #######################################
 run: $(BUILD_DIR)/$(TARGET).elf
-	@touch $(QEMU_PIPE)
 	$(QEMU_EXECUTABLE) $(QEMU_OPT) -kernel $<
 
 -include $(wildcard $(BUILD_DIR)/*.d)
